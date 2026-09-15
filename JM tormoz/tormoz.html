@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> JM tormoz nazorati </title>
+    <title>JM tormoz nazorati</title>
     <style>
         * {
             box-sizing: border-box;
@@ -501,9 +501,9 @@
     <!-- BOSHQARUV PANEL -->
     <div class="panel">
         <div class="legend">
-            <div class="legend-item"><div class="color-box status-blue"></div><span>Yangi</span></div>
-            <div class="legend-item"><div class="color-box status-yellow"></div><span>O'rtacha</span></div>
-            <div class="legend-item"><div class="color-box status-red"></div><span>Eski</span></div>
+            <div class="legend-item"><div class="color-box status-blue"></div><span>Yangi (0-30 kun)</span></div>
+            <div class="legend-item"><div class="color-box status-yellow"></div><span>O'rtacha (31-60 kun)</span></div>
+            <div class="legend-item"><div class="color-box status-red"></div><span>Eski (60+ kun)</span></div>
         </div>
 
         <div class="button-group">
@@ -533,7 +533,7 @@
     </div>
 
     <script>
-        const API_URL = "https://jm-tormoz.onrender.com/";
+        const API_URL = "https://jm-tormoz.onrender.com";
         const wagons = ['TC1', '2', '3', '4', '5', '6', 'TC2'];
         let currentWagon = 'TC1';
         let selectedPadId = null;
@@ -548,25 +548,56 @@
             'TC2': [13, 14]
         };
 
-        // Kolodkalar holati va Almashtirishlar tarixi (DB simulator)
-        const trainData = {};
-        const replacementLogs = [];
+        // Serverdan olingan kolodkalar holati va almashtirishlar tarixi
+        let trainData = {};
+        let replacementLogs = [];
 
-        // Boshlang'ich namuna ma'lumotlarini yuklash
+        // Boshlang'ich holat strukturasi
         wagons.forEach(w => {
             trainData[w] = {};
             for (let i = 1; i <= 16; i++) {
-                trainData[w][i] = Math.floor(Math.random() * 80);
+                trainData[w][i] = 0; // default days
             }
         });
 
-        // Test uchun bir nechta tarixiy yozuvlar (Shundan biri eng yangi)
-        const now = new Date();
-        replacementLogs.push(
-            { id: 1, wagon: 'TC1', bogie: 1, pad: 1, timestamp: new Date(now.getTime() - 86400000 * 3), prevDays: 75 },
-            { id: 2, wagon: '2', bogie: 3, pad: 5, timestamp: new Date(now.getTime() - 86400000 * 1), prevDays: 65 },
-            { id: 3, wagon: 'TC1', bogie: 1, pad: 1, timestamp: new Date(now.getTime() - 3600000 * 2), prevDays: 45 } // Eng yangi
-        );
+        // 2-O'ZGARISH: Backend serverdan kolodkalar holatini yuklash
+        async function loadPadsData() {
+            try {
+                const res = await fetch(`${API_URL}/api/pads`);
+                if (res.ok) {
+                    const data = await res.json();
+                    // Server javobi formatiga mos ravishda parsing
+                    data.forEach(item => {
+                        if (trainData[item.wagon_code]) {
+                            trainData[item.wagon_code][item.pad_index] = item.days_used;
+                        }
+                    });
+                    updateUI();
+                }
+            } catch (err) {
+                console.error("API ga ulanishda xatolik:", err);
+            }
+        }
+
+        // Backend serverdan almashtirish loglarini yuklash
+        async function loadLogsData() {
+            try {
+                const res = await fetch(`${API_URL}/api/logs`);
+                if (res.ok) {
+                    const data = await res.json();
+                    replacementLogs = data.map(item => ({
+                        id: item.id,
+                        wagon: item.wagon_code,
+                        bogie: item.bogie_number,
+                        pad: item.pad_index,
+                        timestamp: new Date(item.created_at),
+                        prevDays: item.prev_days_used || 0
+                    }));
+                }
+            } catch (err) {
+                console.error("Loglarni yuklashda xatolik:", err);
+            }
+        }
 
         function selectWagon(wagonName) {
             currentWagon = wagonName;
@@ -611,7 +642,7 @@
         function updateUI() {
             const wagonPads = trainData[currentWagon];
             for (let id = 1; id <= 16; id++) {
-                const days = wagonPads[id];
+                const days = wagonPads[id] || 0;
                 const btn = document.getElementById(`pad-${id}`);
                 
                 btn.className = 'pad-btn';
@@ -642,25 +673,34 @@
             document.getElementById('confirm-modal').style.display = 'none';
         }
 
-        function confirmReplacement() {
+        // 2-O'ZGARISH: Backend POST so'rovi orqali almashtirishni tasdiqlash
+        async function confirmReplacement() {
             if (selectedPadId !== null) {
                 const bogies = bogieMapping[currentWagon];
                 const bogieNum = selectedPadId <= 8 ? bogies[0] : bogies[1];
-                const currentDays = trainData[currentWagon][selectedPadId];
 
-                // Yangi yozuv qo'shish
-                replacementLogs.push({
-                    id: Date.now(),
-                    wagon: currentWagon,
-                    bogie: bogieNum,
-                    pad: selectedPadId,
-                    timestamp: new Date(),
-                    prevDays: currentDays
-                });
+                try {
+                    const res = await fetch(`${API_URL}/api/replace`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            wagon_code: currentWagon,
+                            bogie_number: bogieNum,
+                            pad_index: selectedPadId
+                        })
+                    });
 
-                trainData[currentWagon][selectedPadId] = 0; // Yangilandi
-                updateUI();
-                closeConfirmModal();
+                    if (res.ok) {
+                        trainData[currentWagon][selectedPadId] = 0; // Local xotirada 0 ga tushirish
+                        await loadLogsData(); // Loglarni va oxirgi marta o'zgargan sanalarni yangilash
+                        updateUI();
+                        closeConfirmModal();
+                    } else {
+                        alert("Xatolik yuz berdi. Backend bilan aloqani tekshiring!");
+                    }
+                } catch (err) {
+                    console.error("Almashtirish jarayonida xatolik:", err);
+                }
             }
         }
 
@@ -681,12 +721,12 @@
                 itemsDiv.innerHTML = `<p style="font-size:11px; color:#64748b; margin-top:5px;">Oxirgi 2 kunda o'zgarishlar kiritilmagan.</p>`;
             } else {
                 let html = '';
-                recentLogs.reverse().forEach(log => {
+                recentLogs.slice().reverse().forEach(log => {
                     const timeStr = log.timestamp.toLocaleString('uz-UZ', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                     const wagonStr = (log.wagon === 'TC1' || log.wagon === 'TC2') ? log.wagon : `${log.wagon}-vag`;
                     html += `
                         <div class="edit-item">
-                            <span><b>${wagonStr}</b> (${log.bogie}-Tel) K${log.pad} - <small>${timeStr}</small></span>
+                            <span><b>${wagonStr}</b> (${log.bogie}-Arav) K${log.pad} - <small>${timeStr}</small></span>
                             <button class="btn-delete-log" onclick="deleteLog(${log.id})">O'chirish</button>
                         </div>
                     `;
@@ -696,22 +736,23 @@
             container.style.display = 'block';
         }
 
-        // Kiritilgan noto'g'ri yozuvni o'chirish
-        function deleteLog(logId) {
-            const logIndex = replacementLogs.findIndex(l => l.id === logId);
-            if (logIndex !== -1) {
-                const log = replacementLogs[logIndex];
-                // Oldingi holatga qaytarish
-                trainData[log.wagon][log.pad] = log.prevDays;
-                replacementLogs.splice(logIndex, 1);
-                
-                updateUI();
-                toggleEditList(); // Ro'yxatni qayta yangilash
+        // Kiritilgan noto'g'ri yozuvni o'chirish (DELETE API integratsiyasi)
+        async function deleteLog(logId) {
+            try {
+                const res = await fetch(`${API_URL}/api/logs/${logId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    await loadPadsData();
+                    await loadLogsData();
+                    toggleEditList(); // Ro'yxatni yangilash
+                }
+            } catch (err) {
+                console.error("O'chirishda xatolik:", err);
             }
         }
 
-        /* TARIQAT VA EXCEL JADVALI (Barcha Vagonlar Ketma-ketligi bilan) */
+        // 3-O'ZGARISH: Oxirgi almashtirilgan sanani topish va almashtirishlar tarixida aks ettirish
         async function fetchSummaryReport() {
+            await loadLogsData();
             const output = document.getElementById('report-output');
 
             if (replacementLogs.length === 0) {
@@ -720,12 +761,11 @@
                 return;
             }
 
-            // Eng yangi yozuvni topish (Sana ko'k rangda bo'lishi uchun)
+            // Butun poyezd bo'yicha eng oxirgi (eng yangi) almashtirish logini topish
             const latestLog = replacementLogs.reduce((max, log) => log.timestamp > max.timestamp ? log : max, replacementLogs[0]);
 
             let html = `<strong style="font-size:14px; color:#1e293b;">Poyezd Bo'yicha Kolodkalar Almashtirish Tarixi:</strong><br><br>`;
             
-            // Vagonlar bo'yicha ketma-ket jadval chiqarish
             wagons.forEach(wagonName => {
                 const wagonLabel = (wagonName === 'TC1' || wagonName === 'TC2') ? wagonName : `${wagonName}-vagon`;
                 const logsForWagon = replacementLogs.filter(l => l.wagon === wagonName);
@@ -751,9 +791,9 @@
                         const rowClass = isLatest ? 'class="latest-row"' : '';
                         const timeStr = log.timestamp.toLocaleString('uz-UZ', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                         
-                        // Eng yangisi ko'k rangda
+                        // 3-O'ZGARISH: Oxirgi almashtirilgan sana ko'k rangda va maxsus belgi bilan ajratiladi
                         const dateDisplay = isLatest 
-                            ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Yangi</span>`
+                            ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Oxirgi Almashtirish</span>`
                             : `<span>${timeStr}</span>`;
 
                         html += `<tr ${rowClass}>
@@ -776,7 +816,14 @@
             window.location.href = `${API_URL}/report/export-excel`;
         }
 
-        selectWagon('TC1');
+        // Dastlabki ma'lumotlarni yuklash
+        async function initApp() {
+            await loadPadsData();
+            await loadLogsData();
+            selectWagon('TC1');
+        }
+
+        initApp();
     </script>
 </body>
 </html>
