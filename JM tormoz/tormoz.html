@@ -500,11 +500,6 @@
 
     <!-- BOSHQARUV PANEL -->
     <div class="panel">
-        <div class="legend">
-            <div class="legend-item"><div class="color-box status-blue"></div><span>Yangi (0-30 kun)</span></div>
-            <div class="legend-item"><div class="color-box status-yellow"></div><span>O'rtacha (31-60 kun)</span></div>
-            <div class="legend-item"><div class="color-box status-red"></div><span>Eski (60+ kun)</span></div>
-        </div>
 
         <div class="button-group">
             <button class="report-btn" onclick="fetchSummaryReport()">Almashtirishlar Tarixi</button>
@@ -824,7 +819,7 @@ async function deleteLog(logId) {
                 
                 // Agar o'sha bir xil sanada bo'lsa, hammasida ko'k yozuv va nishoncha chiqadi
                 const dateDisplay = isLatestDate 
-                    ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Oxirgi Almashtirish</span>`
+                    ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Yangi</span>`
                     : `<span>${timeStr}</span>`;
 
                 html += `<tr ${rowClass}>
