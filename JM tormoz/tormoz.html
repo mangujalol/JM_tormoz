@@ -779,65 +779,69 @@ async function deleteLog(logId) {
 
         // 3-O'ZGARISH: Oxirgi almashtirilgan sanani topish va almashtirishlar tarixida aks ettirish
         async function fetchSummaryReport() {
-            await loadLogsData();
-            const output = document.getElementById('report-output');
+    await loadLogsData();
+    const output = document.getElementById('report-output');
 
-            if (replacementLogs.length === 0) {
-                output.innerHTML = "<b>Almashtirishlar tarixi mavjud emas.</b>";
-                output.style.display = 'block';
-                return;
-            }
+    if (replacementLogs.length === 0) {
+        output.innerHTML = "<b>Almashtirishlar tarixi mavjud emas.</b>";
+        output.style.display = 'block';
+        return;
+    }
 
-            // Butun poyezd bo'yicha eng oxirgi (eng yangi) almashtirish logini topish
-            const latestLog = replacementLogs.reduce((max, log) => log.timestamp > max.timestamp ? log : max, replacementLogs[0]);
+    // 1. Eng oxirgi almashtirish sanasini (faqat YYYY-MM-DD qismini) topish
+    const maxTimestamp = Math.max(...replacementLogs.map(l => l.timestamp.getTime()));
+    const latestDateStr = new Date(maxTimestamp).toISOString().split('T')[0]; // Misol: "2026-09-15"
 
-            let html = `<strong style="font-size:14px; color:#1e293b;">Poyezd Bo'yicha Kolodkalar Almashtirish Tarixi:</strong><br><br>`;
+    let html = `<strong style="font-size:14px; color:#1e293b;">Poyezd Bo'yicha Kolodkalar Almashtirish Tarixi:</strong><br><br>`;
+    
+    wagons.forEach(wagonName => {
+        const wagonLabel = (wagonName === 'TC1' || wagonName === 'TC2') ? wagonName : `${wagonName}-vagon`;
+        const logsForWagon = replacementLogs.filter(l => l.wagon === wagonName);
+
+        html += `<div style="margin-bottom: 12px;">
+            <span style="font-weight:bold; color:#1d4ed8; font-size:13px;">🚆 ${wagonLabel}</span>`;
+
+        if (logsForWagon.length === 0) {
+            html += `<p style="font-size:11px; color:#94a3b8; margin-left:10px;">Ushbu vagonda almashtirishlar bo'lmagan.</p>`;
+        } else {
+            html += `<table border="1" style="width:100%; border-collapse:collapse; font-size:12px; text-align:left; margin-top:4px;">
+                <thead>
+                    <tr style="background:#e2e8f0; color:#334155;">
+                        <th style="padding:4px 6px;">Aravacha</th>
+                        <th style="padding:4px 6px;">Kolodka</th>
+                        <th style="padding:4px 6px;">Almashtirilgan Sana va Vaqt</th>
+                    </tr>
+                </thead>
+                <tbody>`;
             
-            wagons.forEach(wagonName => {
-                const wagonLabel = (wagonName === 'TC1' || wagonName === 'TC2') ? wagonName : `${wagonName}-vagon`;
-                const logsForWagon = replacementLogs.filter(l => l.wagon === wagonName);
+            logsForWagon.sort((a,b) => b.timestamp - a.timestamp).forEach(log => {
+                // Tekshiruv: Logning sanasi eng oxirgi sanaga tengmi?
+                const logDateStr = log.timestamp.toISOString().split('T')[0];
+                const isLatestDate = logDateStr === latestDateStr;
 
-                html += `<div style="margin-bottom: 12px;">
-                    <span style="font-weight:bold; color:#1d4ed8; font-size:13px;">🚆 ${wagonLabel}</span>`;
+                const rowClass = isLatestDate ? 'class="latest-row"' : '';
+                const timeStr = log.timestamp.toLocaleString('uz-UZ', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                
+                // Agar o'sha bir xil sanada bo'lsa, hammasida ko'k yozuv va nishoncha chiqadi
+                const dateDisplay = isLatestDate 
+                    ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Oxirgi Almashtirish</span>`
+                    : `<span>${timeStr}</span>`;
 
-                if (logsForWagon.length === 0) {
-                    html += `<p style="font-size:11px; color:#94a3b8; margin-left:10px;">Ushbu vagonda almashtirishlar bo'lmagan.</p>`;
-                } else {
-                    html += `<table border="1" style="width:100%; border-collapse:collapse; font-size:12px; text-align:left; margin-top:4px;">
-                        <thead>
-                            <tr style="background:#e2e8f0; color:#334155;">
-                                <th style="padding:4px 6px;">Aravacha</th>
-                                <th style="padding:4px 6px;">Kolodka</th>
-                                <th style="padding:4px 6px;">Almashtirilgan Sana va Vaqt</th>
-                            </tr>
-                        </thead>
-                        <tbody>`;
-                    
-                    logsForWagon.sort((a,b) => b.timestamp - a.timestamp).forEach(log => {
-                        const isLatest = log.id === latestLog.id;
-                        const rowClass = isLatest ? 'class="latest-row"' : '';
-                        const timeStr = log.timestamp.toLocaleString('uz-UZ', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                        
-                        // 3-O'ZGARISH: Oxirgi almashtirilgan sana ko'k rangda va maxsus belgi bilan ajratiladi
-                        const dateDisplay = isLatest 
-                            ? `<span style="color:#2563eb; font-weight:bold;">${timeStr}</span><span class="latest-badge"> Oxirgi Almashtirish</span>`
-                            : `<span>${timeStr}</span>`;
-
-                        html += `<tr ${rowClass}>
-                            <td style="padding:4px 6px;">${log.bogie}-Aravacha</td>
-                            <td style="padding:4px 6px;"><b>K${log.pad}</b></td>
-                            <td style="padding:4px 6px;">${dateDisplay}</td>
-                        </tr>`;
-                    });
-
-                    html += `</tbody></table>`;
-                }
-                html += `</div>`;
+                html += `<tr ${rowClass}>
+                    <td style="padding:4px 6px;">${log.bogie}-Aravacha</td>
+                    <td style="padding:4px 6px;"><b>K${log.pad}</b></td>
+                    <td style="padding:4px 6px;">${dateDisplay}</td>
+                </tr>`;
             });
 
-            output.innerHTML = html;
-            output.style.display = 'block';
+            html += `</tbody></table>`;
         }
+        html += `</div>`;
+    });
+
+    output.innerHTML = html;
+    output.style.display = 'block';
+}
 
         function downloadExcelReport() {
             window.location.href = `${API_URL}/report/export-excel`;
