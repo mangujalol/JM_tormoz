@@ -1,77 +1,15 @@
-import os
-from datetime import datetime, timedelta
-from typing import List, Optional
-
-import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Integer, String, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from typing import List, Optional
+from datetime import datetime
+import pandas as pd
+import tempfile
 
-# ---------------------------------------------------------
-# BAZA VA FAYL TIZIMI SOZLAMALARI (Render moslashuvi)
-# ---------------------------------------------------------
-DB_PATH = os.environ.get("DB_PATH", "/tmp/train_brakes.db")
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+app = FastAPI(title="JM Tormoz API")
 
-engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-
-# ---------------------------------------------------------
-# DATABASE MODELLARI
-# ---------------------------------------------------------
-class BrakeReplacement(Base):
-    __tablename__ = "replacements"
-
-    id = Column(Integer, primary_key=True, index=True)
-    wagon_number = Column(Integer, nullable=False)  # 1 - 7
-    bogie_number = Column(Integer, nullable=False)  # 1 - 14
-    pad_position = Column(Integer, nullable=False)  # 1 - 16
-    replaced_at = Column(DateTime, default=datetime.utcnow)
-    notes = Column(String, nullable=True)
-
-
-# Jadvallarni yaratish (Tuzatilgan qism)
-Base.metadata.create_all(bind=engine)
-
-
-# ---------------------------------------------------------
-# PYDANTIC SCHEMAS
-# ---------------------------------------------------------
-class ReplacementCreate(BaseModel):
-    wagon_number: int
-    bogie_number: int
-    pad_position: int
-    notes: Optional[str] = None
-
-
-class ReplacementResponse(BaseModel):
-    id: int
-    wagon_number: int
-    bogie_number: int
-    pad_position: int
-    replaced_at: datetime
-    notes: Optional[str]
-
-    class Config:
-        from_attributes = True
-
-
-# ---------------------------------------------------------
-# FASTAPI ILOVA SOZLAMALARI
-# ---------------------------------------------------------
-app = FastAPI(
-    title="JM Train Brake Management System",
-    description="7 vagonli poyezd tormoz kalodkalari monitoringi backend API",
-)
-
-# CORS sozlamalari
+# CORS sozlamalari (Frontend ulanishi uchun)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -80,159 +18,102 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- MODELS (Pydantic) ---
+class PadReplaceRequest(BaseModel):
+    wagon_code: str
+    bogie_number: int
+    pad_index: int
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- SOXTA/MA'LUMOTLAR BAZASI (DB o'rniga namuna) ---
+# Ishlab chiqish davrida SQLAlchemy DB modeliga moslaysiz
+pads_db = []
+logs_db = []
 
+# Boshlang'ich ma'lumotlarni to'ldirish
+wagons = ['TC1', '2', '3', '4', '5', '6', 'TC2']
+bogie_map = {'TC1': [1, 2], '2': [3, 4], '3': [5, 6], '4': [7, 8], '5': [9, 10], '6': [11, 12], 'TC2': [13, 14]}
 
-# ---------------------------------------------------------
-# API ENDPOINTLARI
-# ---------------------------------------------------------
-@app.get("/")
-def read_root():
-    return {
-        "status": "online",
-        "system": "JM Train Brake API",
-        "version": "1.0.0",
-    }
+log_id_counter = 1
 
-
-# 1. Barcha joriy kalodkalar holatini olish
-@app.get("/api/replacements", response_model=List[ReplacementResponse])
-def get_all_replacements(db: Session = Depends(get_db)):
-    return (
-        db.query(BrakeReplacement)
-        .order_by(BrakeReplacement.replaced_at.desc())
-        .all()
-    )
-
-
-# 2. Yangi kalodka almashtirish logini qo'shish
-@app.post(
-    "/api/replacements",
-    response_model=ReplacementResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_replacement(
-    data: ReplacementCreate, db: Session = Depends(get_db)
-):
-    if not (1 <= data.wagon_number <= 7):
-        raise HTTPException(
-            status_code=400, detail="Vagon raqami 1 va 7 orasida bo'lishi kerak"
-        )
-    if not (1 <= data.bogie_number <= 14):
-        raise HTTPException(
-            status_code=400, detail="Telejka raqami 1 va 14 orasida bo'lishi kerak"
-        )
-    if not (1 <= data.pad_position <= 16):
-        raise HTTPException(
-            status_code=400,
-            detail="Kalodka pozitsiyasi 1 va 16 orasida bo'lishi kerak",
-        )
-
-    new_record = BrakeReplacement(
-        wagon_number=data.wagon_number,
-        bogie_number=data.bogie_number,
-        pad_position=data.pad_position,
-        notes=data.notes,
-    )
-    db.add(new_record)
-    db.commit()
-    db.refresh(new_record)
-    return new_record
-
-
-# 3. Yozuvni tahrirlash (2 kunlik muddat cheklovi bilan)
-@app.put("/api/replacements/{item_id}", response_model=ReplacementResponse)
-def update_replacement(
-    item_id: int, data: ReplacementCreate, db: Session = Depends(get_db)
-):
-    record = (
-        db.query(BrakeReplacement)
-        .filter(BrakeReplacement.id == item_id)
-        .first()
-    )
-    if not record:
-        raise HTTPException(status_code=404, detail="Yozuv topilmadi")
-
-    if datetime.utcnow() - record.replaced_at > timedelta(days=2):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Yozuv yaratilganidan beri 2 kundan ortiq vaqt o'tdi."
-                " Tahrirlash taqiqlangan."
-            ),
-        )
-
-    record.wagon_number = data.wagon_number
-    record.bogie_number = data.bogie_number
-    record.pad_position = data.pad_position
-    record.notes = data.notes
-
-    db.commit()
-    db.refresh(record)
-    return record
-
-
-# 4. Yozuvni o'chirish (2 kunlik muddat cheklovi bilan)
-@app.delete("/api/replacements/{item_id}")
-def delete_replacement(item_id: int, db: Session = Depends(get_db)):
-    record = (
-        db.query(BrakeReplacement)
-        .filter(BrakeReplacement.id == item_id)
-        .first()
-    )
-    if not record:
-        raise HTTPException(status_code=404, detail="Yozuv topilmadi")
-
-    if datetime.utcnow() - record.replaced_at > timedelta(days=2):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Yozuv yaratilganidan beri 2 kundan ortiq vaqt o'tdi."
-                " O'chirish taqiqlangan."
-            ),
-        )
-
-    db.delete(record)
-    db.commit()
-    return {"message": "Yozuv muvaffaqiyatli o'chirildi", "id": item_id}
-
-
-# 5. Excel hisobotini yuklab olish
-@app.get("/api/reports/excel")
-def export_excel_report(db: Session = Depends(get_db)):
-    records = (
-        db.query(BrakeReplacement)
-        .order_by(BrakeReplacement.replaced_at.desc())
-        .all()
-    )
-
-    data = []
-    for r in records:
-        data.append({
-            "ID": r.id,
-            "Vagon №": r.wagon_number,
-            "Telejka №": r.bogie_number,
-            "Kalodka pozitsiyasi": r.pad_position,
-            "Almashtirilgan sana (UTC)": r.replaced_at.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
-            "Izohlar": r.notes or "",
+for w in wagons:
+    for pad in range(1, 17):
+        bogie = bogie_map[w][0] if pad <= 8 else bogie_map[w][1]
+        pads_db.append({
+            "wagon_code": w,
+            "bogie_number": bogie,
+            "pad_index": pad,
+            "days_used": 0
         })
 
-    df = pd.DataFrame(data)
-    export_path = "/tmp/jm_tormoz_hisobot.xlsx"
-    df.to_excel(export_path, index=False, engine="openpyxl")
+# --- ENDPOINTS ---
 
-    return FileResponse(
-        path=export_path,
-        filename=f"JM_Tormoz_Hisobot_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
-    )
+@app.get("/api/pads")
+def get_all_pads():
+    """Barcha kolodkalar holati va ishlatilgan kunlarini qaytaradi"""
+    return pads_db
+
+@app.get("/api/logs")
+def get_all_logs():
+    """Almashtirishlar tarixini (logs) qaytaradi (Oxirgi sanalar uchun)"""
+    return logs_db
+
+@app.post("/api/replace")
+def replace_pad(req: PadReplaceRequest):
+    """Kolodkani almashtirish va kunini 0 ga tushirish"""
+    global log_id_counter
+    
+    # Pad-ni topish
+    pad = next((p for p in pads_db if p["wagon_code"] == req.wagon_code and p["pad_index"] == req.pad_index), None)
+    if not pad:
+        raise HTTPException(status_code=404, detail="Kolodka topilmadi")
+
+    prev_days = pad["days_used"]
+    pad["days_used"] = 0  # Kunini 0 ga tushirish
+
+    # Log yaratish
+    new_log = {
+        "id": log_id_counter,
+        "wagon_code": req.wagon_code,
+        "bogie_number": req.bogie_number,
+        "pad_index": req.pad_index,
+        "prev_days_used": prev_days,
+        "created_at": datetime.now().isoformat()
+    }
+    logs_db.append(new_log)
+    log_id_counter += 1
+
+    return {"status": "success", "message": "Kolodka almashtirildi", "log": new_log}
+
+@app.delete("/api/logs/{log_id}")
+def delete_log(log_id: int):
+    """Tahrirlash: Xato kiritilgan logni o'chirish va oldingi kunini tiklash"""
+    log_idx = next((i for i, l in enumerate(logs_db) if l["id"] == log_id), None)
+    if log_idx is None:
+        raise HTTPException(status_code=404, detail="Log topilmadi")
+
+    log = logs_db.pop(log_idx)
+
+    # Kolodkaning oldingi kunini qaytarish
+    pad = next((p for p in pads_db if p["wagon_code"] == log["wagon_code"] and p["pad_index"] == log["pad_index"]), None)
+    if pad:
+        pad["days_used"] = log["prev_days_used"]
+
+    return {"status": "success", "message": "Log o'chirildi va kolodka holati tiklandi"}
+
+@app.get("/report/export-excel")
+def export_excel():
+    """Tarixni Excel fayl ko'rinishida yuklab berish"""
+    if not logs_db:
+        df = pd.DataFrame(columns=["ID", "Vagon", "Aravacha", "Kolodka", "Eski Kun", "Sana"])
+    else:
+        df = pd.DataFrame(logs_db)
+        df.columns = ["ID", "Vagon", "Aravacha", "Kolodka Index", "Oldingi Kunlar", "Almashtirilgan Vaqt"]
+
+    # Vaqtinchalik faylga saqlash va yuklash
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        df.to_excel(tmp.name, index=False, engine='openpyxl')
+        return FileResponse(
+            path=tmp.name,
+            filename=f"JM_tormoz_hisobot_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
