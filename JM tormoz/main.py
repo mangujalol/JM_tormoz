@@ -86,19 +86,20 @@ def replace_pad(req: PadReplaceRequest):
 
 @app.delete("/api/logs/{log_id}")
 def delete_log(log_id: int):
-    """Tahrirlash: Xato kiritilgan logni o'chirish va oldingi kunini tiklash"""
+    # log_id integer turida URL yo'li orqali qabul qilinadi
     log_idx = next((i for i, l in enumerate(logs_db) if l["id"] == log_id), None)
+    
     if log_idx is None:
-        raise HTTPException(status_code=404, detail="Log topilmadi")
+        raise HTTPException(status_code=404, detail="Bunday ID ga ega log topilmadi")
 
     log = logs_db.pop(log_idx)
 
-    # Kolodkaning oldingi kunini qaytarish
+    # Kolodkaning oldingi ishlatilgan kunini qayta tiklash
     pad = next((p for p in pads_db if p["wagon_code"] == log["wagon_code"] and p["pad_index"] == log["pad_index"]), None)
     if pad:
         pad["days_used"] = log["prev_days_used"]
 
-    return {"status": "success", "message": "Log o'chirildi va kolodka holati tiklandi"}
+    return {"status": "success", "message": f"Log #{log_id} o'chirildi"}
 
 @app.get("/report/export-excel")
 def export_excel():

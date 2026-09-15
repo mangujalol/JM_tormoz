@@ -579,25 +579,52 @@
             }
         }
 
-        // Backend serverdan almashtirish loglarini yuklash
-        async function loadLogsData() {
-            try {
-                const res = await fetch(`${API_URL}/api/logs`);
-                if (res.ok) {
-                    const data = await res.json();
-                    replacementLogs = data.map(item => ({
-                        id: item.id,
-                        wagon: item.wagon_code,
-                        bogie: item.bogie_number,
-                        pad: item.pad_index,
-                        timestamp: new Date(item.created_at),
-                        prevDays: item.prev_days_used || 0
-                    }));
-                }
-            } catch (err) {
-                console.error("Loglarni yuklashda xatolik:", err);
-            }
+        // Backenddan kelgan loglar ro'yxatini yuklash
+async function loadLogsData() {
+    try {
+        const res = await fetch(`${API_URL}/api/logs`);
+        if (res.ok) {
+            const data = await res.json();
+            
+            // Backenddan 'id' kelayotganiga va u borligiga ishonch hosil qilamiz
+            replacementLogs = data.map(item => ({
+                id: item.id, // Agar DB 'id' o'rniga '_id' ishlatgan bo'lsa: item.id || item._id
+                wagon: item.wagon_code,
+                bogie: item.bogie_number,
+                pad: item.pad_index,
+                timestamp: new Date(item.created_at),
+                prevDays: item.prev_days_used || 0
+            }));
         }
+    } catch (err) {
+        console.error("Loglarni yuklashda xatolik:", err);
+    }
+}
+
+// O'chirish funksiyasi (logId aniq uzatilishi shart)
+async function deleteLog(logId) {
+    if (!logId) {
+        console.error("log_id yetkazilmadi!");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/api/logs/${logId}`, { 
+            method: 'DELETE' 
+        });
+
+        if (res.ok) {
+            await loadPadsData();
+            await loadLogsData();
+            toggleEditList(); // Ro'yxatni yangilash
+        } else {
+            const errorData = await res.json();
+            alert(`Xatolik: ${JSON.stringify(errorData.detail)}`);
+        }
+    } catch (err) {
+        console.error("O'chirishda xatolik:", err);
+    }
+}
 
         function selectWagon(wagonName) {
             currentWagon = wagonName;
